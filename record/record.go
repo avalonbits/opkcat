@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +24,31 @@ type Record struct {
 	URL         string
 	Hash        []byte
 	Icon        []byte
+}
+
+func FromOPKURL(opkurl string) (*Record, error) {
+	tmpFile, err := ioutil.TempFile("", "")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	resp, err := http.Get(opkurl)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return nil, err
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		return nil, err
+	}
+
+	return FromOPK(tmpFile.Name(), opkurl)
 }
 
 // FromOPK creates a record by parsing an opkfile. opkurl as added to the the record.URL field.
