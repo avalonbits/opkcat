@@ -9,18 +9,23 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"gopkg.in/ini.v1"
 )
 
 // Record is the record that can be stored in the database.
 type Record struct {
 	Name        string
 	Description string
-	Cateogry    string
+	Type        string
+	Category    []string
 	URL         string
 	Hash        []byte
 	Icon        []byte
 }
 
+// FromOPK creates a record by parsing an opkfile. opkurl as added to the the record.URL field.
 func FromOPK(opkfile, opkurl string) (*Record, error) {
 	hash, err := fileSHA256(opkfile)
 	if err != nil {
@@ -38,6 +43,7 @@ func FromOPK(opkfile, opkurl string) (*Record, error) {
 	return record, nil
 }
 
+// fileSHA256 computes the SHA256 hash of a file.
 func fileSHA256(name string) ([]byte, error) {
 	f, err := os.Open(name)
 	if err != nil {
@@ -52,6 +58,7 @@ func fileSHA256(name string) ([]byte, error) {
 	return to.Sum(nil), nil
 }
 
+// extractOPK opens and pareses the contents of the opk file to create a valid record.
 func extractOPK(file string, record *Record) error {
 	dir, err := ioutil.TempDir("", "")
 	if err != nil {
@@ -59,12 +66,14 @@ func extractOPK(file string, record *Record) error {
 	}
 	defer os.RemoveAll(dir)
 
+	// Unsquash the opk file so we can read its contents.
 	finalDir := fmt.Sprintf("%s/%x", dir, record.Hash)
 	cmd := exec.Command("unsquashfs", "-d", finalDir, file)
 	if err := cmd.Run(); err != nil {
 		return err
 	}
 
+	// Read and parse the default desktop entry file.
 	entry := filepath.Join(finalDir, "default.gcw0.desktop")
 	fEntry, err := os.Open(entry)
 	if err != nil {
@@ -76,6 +85,39 @@ func extractOPK(file string, record *Record) error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(string(content))
+	return parseDesktopEntry(content, finalDir, record)
+}
+
+// parseDesktopEntry parses the opk desktop entry file.
+// It uses the ini file format.
+func parseDesktopEntry(content []byte, dir string, record *Record) error {
+	cfg, err := ini.Load(content)
+	if err != nil {
+		return err
+	}
+
+	// Read the string values from the desktop entry.
+	sec, err := cfg.GetSection("Desktop Entry")
+	if err != nil {
+		return nil
+	}
+	record.Name = sec.Key("Name").String()
+	record.Type = sec.Key("Type").String()
+	record.Description = sec.Key("Comment").String()
+	record.Category = strings.Split(sec.Key("Categories").String(), ";")
+
+	// Read the icon content. It is always a png file.
+	icon := sec.Key("Icon").String() + ".png"
+	fIcon, err := os.Open(filepath.Join(dir, icon))
+	if err != nil {
+		return err
+	}
+	defer fIcon.Close()
+
+	iconData, err := ioutil.ReadAll(fIcon)
+	if err != nil {
+		return err
+	}
+	record.Icon = iconData
 	return nil
 }
