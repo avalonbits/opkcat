@@ -22,7 +22,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -33,16 +32,19 @@ import (
 )
 
 var (
-	dbdir = flag.String("db_dir", "", "Location of the database. Should point to an existing directory.")
+	dbDir = flag.String("db_dir", "",
+		"Location of the database. Should point to an existing directory.")
+	tmpDir = flag.String("tmp_dir", "",
+		"Location use for temporary data. If empty, will use the system default.")
 )
 
 func main() {
 	flag.Parse()
 
-	_, _ = db.Prod(*dbdir)
+	_, _ = db.Prod(*dbDir)
 	var count int32
 	ctx := context.Background()
-	sources := opkcat.SourceList(os.Args[1])
+	sources := opkcat.SourceList(flag.Args()[0])
 	records := make([]*record.Record, len(sources))
 	sem := semaphore.NewWeighted(10)
 	var wg sync.WaitGroup
@@ -58,7 +60,7 @@ func main() {
 			}
 			defer sem.Release(1)
 
-			rec, err := record.FromOPKURL(url)
+			rec, err := record.FromOPKURL(*tmpDir, url)
 			if err != nil {
 				fmt.Printf("Error processing %s: %v\n", url, err)
 				return

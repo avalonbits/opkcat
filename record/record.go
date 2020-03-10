@@ -49,8 +49,8 @@ type Entry struct {
 	Icon        []byte
 }
 
-func FromOPKURL(opkurl string) (*Record, error) {
-	tmpFile, err := ioutil.TempFile("", "Fopkcat-*-"+url.PathEscape(opkurl))
+func FromOPKURL(tmpdir, opkurl string) (*Record, error) {
+	tmpFile, err := ioutil.TempFile(tmpdir, "Fopkcat-*-"+url.PathEscape(opkurl))
 	if err != nil {
 		return nil, err
 	}
@@ -70,11 +70,11 @@ func FromOPKURL(opkurl string) (*Record, error) {
 		return nil, err
 	}
 
-	return FromOPK(tmpFile.Name(), opkurl)
+	return FromOPK(tmpdir, tmpFile.Name(), opkurl)
 }
 
 // FromOPK creates a record by parsing an opkfile. opkurl as added to the the record.URL field.
-func FromOPK(opkfile, opkurl string) (*Record, error) {
+func FromOPK(tmpdir, opkfile, opkurl string) (*Record, error) {
 	hash, err := fileSHA256(opkfile)
 	if err != nil {
 		return nil, err
@@ -85,7 +85,7 @@ func FromOPK(opkfile, opkurl string) (*Record, error) {
 		URL:  opkurl,
 	}
 
-	if err := extractOPK(opkfile, record); err != nil {
+	if err := extractOPK(tmpdir, opkfile, record); err != nil {
 		return nil, err
 	}
 	return record, nil
@@ -107,8 +107,8 @@ func fileSHA256(name string) ([]byte, error) {
 }
 
 // extractOPK opens and pareses the contents of the opk file to create a valid record.
-func extractOPK(file string, record *Record) error {
-	dir, err := ioutil.TempDir("", "Dopkcat-*")
+func extractOPK(tmpdir, file string, record *Record) error {
+	dir, err := ioutil.TempDir(tmpdir, "Dopkcat-*")
 	if err != nil {
 		return err
 	}
