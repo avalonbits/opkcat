@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,22 +18,25 @@ import (
 
 // Record is the record that can be stored in the database.
 type Record struct {
+	URL     string
+	Hash    []byte
+	Entries []*Entry
+}
+
+type Entry struct {
 	Name        string
 	Description string
 	Type        string
-	Category    []string
-	URL         string
-	Hash        []byte
+	Categories  []string
 	Icon        []byte
 }
 
 func FromOPKURL(opkurl string) (*Record, error) {
-	tmpFile, err := ioutil.TempFile("", "")
+	tmpFile, err := ioutil.TempFile("", "Fopkcat-*-"+url.PathEscape(opkurl))
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmpFile.Name())
-	defer tmpFile.Close()
 
 	resp, err := http.Get(opkurl)
 	if err != nil {
@@ -86,64 +90,75 @@ func fileSHA256(name string) ([]byte, error) {
 
 // extractOPK opens and pareses the contents of the opk file to create a valid record.
 func extractOPK(file string, record *Record) error {
-	dir, err := ioutil.TempDir("", "")
+	dir, err := ioutil.TempDir("", "Dopkcat-*")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
 
 	// Unsquash the opk file so we can read its contents.
-	finalDir := fmt.Sprintf("%s/%x", dir, record.Hash)
-	cmd := exec.Command("unsquashfs", "-d", finalDir, file)
-	if err := cmd.Run(); err != nil {
-		return err
+	finalDir := filepath.Join(dir, url.PathEscape(record.URL))
+	cmd := exec.Command("unsquashfs", "-no-xattrs", "-d", finalDir, file)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w", out, err)
 	}
 
-	// Read and parse the default desktop entry file.
-	entry := filepath.Join(finalDir, "default.gcw0.desktop")
-	fEntry, err := os.Open(entry)
+	// Read and parse the  desktop entries.
+	entries, err := filepath.Glob(filepath.Join(finalDir, "*.gcw0.desktop"))
 	if err != nil {
 		return err
 	}
-	defer fEntry.Close()
+	for _, entry := range entries {
+		fEntry, err := os.Open(entry)
+		if err != nil {
+			return err
+		}
+		defer fEntry.Close()
 
-	content, err := ioutil.ReadAll(fEntry)
-	if err != nil {
-		return err
+		content, err := ioutil.ReadAll(fEntry)
+		if err != nil {
+			return err
+		}
+		entry, err := parseDesktopEntry(content, finalDir)
+		if err != nil {
+			return err
+		}
+		record.Entries = append(record.Entries, entry)
 	}
-	return parseDesktopEntry(content, finalDir, record)
+	return nil
 }
 
 // parseDesktopEntry parses the opk desktop entry file.
 // It uses the ini file format.
-func parseDesktopEntry(content []byte, dir string, record *Record) error {
+func parseDesktopEntry(content []byte, dir string) (*Entry, error) {
 	cfg, err := ini.Load(content)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Read the string values from the desktop entry.
 	sec, err := cfg.GetSection("Desktop Entry")
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	record.Name = sec.Key("Name").String()
-	record.Type = sec.Key("Type").String()
-	record.Description = sec.Key("Comment").String()
-	record.Category = strings.Split(sec.Key("Categories").String(), ";")
 
 	// Read the icon content. It is always a png file.
 	icon := sec.Key("Icon").String() + ".png"
 	fIcon, err := os.Open(filepath.Join(dir, icon))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer fIcon.Close()
 
 	iconData, err := ioutil.ReadAll(fIcon)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	record.Icon = iconData
-	return nil
+	return &Entry{
+		Name:        sec.Key("Name").String(),
+		Type:        sec.Key("Type").String(),
+		Description: sec.Key("Comment").String(),
+		Categories:  strings.Split(sec.Key("Categories").String(), ";"),
+		Icon:        iconData,
+	}, nil
 }
