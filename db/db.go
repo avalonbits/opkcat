@@ -20,6 +20,11 @@
 package db
 
 import (
+	"bytes"
+	"encoding/gob"
+	"fmt"
+
+	"github.com/avalonbits/opkcat/record"
 	"github.com/dgraph-io/badger/v2"
 )
 
@@ -50,4 +55,44 @@ func Test() (*Handle, error) {
 	return &Handle{
 		db: db,
 	}, nil
+}
+
+// PutRecord will inserr a record into the database.
+// If the record already exist, it will be updated.
+func (h *Handle) UpdateRecord(rec *record.Record) error {
+	if len(rec.Hash) == 0 {
+		return fmt.Errorf("no valid hash for the record")
+	}
+
+	// We assume that if the hash exists then the record is valid.
+	return h.db.Update(func(txn *badger.Txn) error {
+		var buf bytes.Buffer
+		enc := gob.NewEncoder(&buf)
+		if err := enc.Encode(rec); err != nil {
+			return err
+		}
+		return txn.Set(rec.Hash, buf.Bytes())
+	})
+}
+
+func (h *Handle) RecordExists(rec *record.Record) (bool, error) {
+	if len(rec.Hash) == 0 {
+		return false, fmt.Errorf("no valid hash for the record")
+	}
+
+	exists := false
+	err := h.db.View(func(txn *badger.Txn) error {
+		// Record exists if key exists, no need to read the value.
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+
+		itr := txn.NewIterator(opts)
+		defer itr.Close()
+
+		// Go straight to our expected key.
+		itr.Seek(rec.Hash)
+		exists = itr.ValidForPrefix(rec.Hash)
+		return nil
+	})
+	return exists, err
 }

@@ -41,11 +41,14 @@ var (
 func main() {
 	flag.Parse()
 
-	_, _ = db.Prod(*dbDir)
+	storage, err := db.Prod(*dbDir)
+	if err != nil {
+		panic(err)
+	}
+
 	var count int32
 	ctx := context.Background()
 	sources := opkcat.SourceList(flag.Args()[0])
-	records := make([]*record.Record, len(sources))
 	sem := semaphore.NewWeighted(10)
 	var wg sync.WaitGroup
 	for i, url := range sources {
@@ -53,6 +56,9 @@ func main() {
 		atomic.AddInt32(&count, 1)
 		go func(idx int, url string) {
 			defer wg.Done()
+			defer func() {
+				fmt.Println("Need to process", atomic.AddInt32(&count, -1))
+			}()
 
 			if err := sem.Acquire(ctx, 1); err != nil {
 				fmt.Printf("Error acquiring semaphore: %v", err)
@@ -65,8 +71,20 @@ func main() {
 				fmt.Printf("Error processing %s: %v\n", url, err)
 				return
 			}
-			records[idx] = rec
-			fmt.Println("Need to process", atomic.AddInt32(&count, -1))
+			exists, err := storage.RecordExists(rec)
+			if err != nil {
+				fmt.Printf("Error reading record: %v\n", err)
+				return
+			}
+
+			if exists {
+				fmt.Printf("Record for %s already inserted.\n", rec.URL)
+				return
+			}
+			if err := storage.UpdateRecord(rec); err != nil {
+				fmt.Printf("Unable to write record: %v", err)
+				return
+			}
 		}(i, url)
 	}
 	fmt.Println("Waiting...")
