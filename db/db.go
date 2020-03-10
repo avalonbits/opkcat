@@ -23,10 +23,12 @@ import (
 	"github.com/dgraph-io/badger/v2"
 )
 
+// Handle is a database handle. It can be used to read and write data concurrently.
 type Handle struct {
 	db *badger.DB
 }
 
+// Prod returns a production version of the database in location.
 func Prod(location string) (*Handle, error) {
 	db, err := badger.Open(badger.DefaultOptions(location))
 	if err != nil {
@@ -38,6 +40,7 @@ func Prod(location string) (*Handle, error) {
 	}, nil
 }
 
+// Test returns a test (in-memory) version of the database.
 func Test() (*Handle, error) {
 	db, err := badger.Open(badger.DefaultOptions("").WithInMemory(true))
 	if err != nil {
