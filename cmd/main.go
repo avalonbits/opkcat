@@ -20,17 +20,24 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
 
 	"github.com/avalonbits/opkcat"
+	"github.com/avalonbits/opkcat/db"
 	"github.com/avalonbits/opkcat/record"
 	"golang.org/x/sync/semaphore"
 )
 
+var (
+	dbdir = flag.String("db_dir", "", "Location of the database. Should point to an existing directory.")
+)
+
 func main() {
+	_, _ = db.Prod(*dbdir)
 	var count int32
 	ctx := context.Background()
 	sources := opkcat.SourceList(os.Args[1])
