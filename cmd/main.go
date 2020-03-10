@@ -37,6 +37,8 @@ var (
 )
 
 func main() {
+	flag.Parse()
+
 	_, _ = db.Prod(*dbdir)
 	var count int32
 	ctx := context.Background()
