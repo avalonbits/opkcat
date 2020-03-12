@@ -23,6 +23,8 @@ import (
 	"bytes"
 	"encoding/gob"
 	"fmt"
+	"net/url"
+	"time"
 
 	"github.com/dgraph-io/badger/v2"
 )
@@ -36,6 +38,7 @@ type Handle struct {
 type Record struct {
 	URL     string
 	Hash    []byte
+	Date    time.Time
 	Entries []*Entry
 }
 
@@ -80,12 +83,7 @@ func (h *Handle) UpdateRecord(rec *Record) error {
 
 	// We assume that if the hash exists then the record is valid.
 	return h.db.Update(func(txn *badger.Txn) error {
-		var buf bytes.Buffer
-		enc := gob.NewEncoder(&buf)
-		if err := enc.Encode(rec); err != nil {
-			return err
-		}
-		return txn.Set(rec.Hash, buf.Bytes())
+		return h.updateRecord(rec, &bytes.Buffer{}, txn)
 	})
 }
 
@@ -102,11 +100,7 @@ func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 			}
 
 			buf.Reset()
-			enc := gob.NewEncoder(&buf)
-			if err := enc.Encode(rec); err != nil {
-				return err
-			}
-			if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
+			if err := h.updateRecord(rec, &buf, txn); err != nil {
 				return err
 			}
 			count++
@@ -114,6 +108,22 @@ func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 		return nil
 	})
 	return count, err
+}
+
+func (h *Handle) updateRecord(rec *Record, buf *bytes.Buffer, txn *badger.Txn) error {
+	enc := gob.NewEncoder(buf)
+	if err := enc.Encode(rec); err != nil {
+		return err
+	}
+	if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
+		return err
+	}
+	buf.Reset()
+	err := enc.Encode(rec.Date)
+	if err != nil {
+		return err
+	}
+	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), buf.Bytes())
 }
 
 func (h *Handle) recordExists(hash []byte, txn *badger.Txn) bool {
