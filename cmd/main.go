@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/avalonbits/opkcat"
 	"github.com/avalonbits/opkcat/db"
@@ -38,6 +39,14 @@ var (
 		"Location use for temporary data. If empty, will use the system default.")
 )
 
+type Getter struct {
+	client *http.Client
+}
+
+func (g *Getter) GetIfModified(since time.Time, url string) (*http.Response, error) {
+	return g.client.Get(url)
+}
+
 func main() {
 	flag.Parse()
 
@@ -45,12 +54,13 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	defer storage.Close()
 
 	var count int32
 	ctx := context.Background()
 	sources := opkcat.SourceList(flag.Args()[0])
 	sem := semaphore.NewWeighted(10)
-	manager := opkcat.NewManager(*tmpDir, &http.Client{}, storage)
+	manager := opkcat.NewManager(*tmpDir, &Getter{client: &http.Client{}}, storage)
 	var wg sync.WaitGroup
 	for _, url := range sources {
 		wg.Add(1)
@@ -67,7 +77,7 @@ func main() {
 			}
 			defer sem.Release(1)
 			if err := manager.LoadFromURL(url); err != nil {
-				fmt.Printf("Error loading from url: %v", url)
+				fmt.Printf("Error loading from url: %v\n", err)
 				return
 			}
 		}(url)

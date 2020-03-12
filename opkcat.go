@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/avalonbits/opkcat/db"
 	"github.com/gomarkdown/markdown/ast"
@@ -38,13 +39,12 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-type HttpHeadGetter interface {
-	Head(url string) (*http.Response, error)
-	Get(url string) (*http.Response, error)
+type ModifiedGetter interface {
+	GetIfModified(since time.Time, url string) (*http.Response, error)
 }
 
 type Manager struct {
-	hClient HttpHeadGetter
+	getter  ModifiedGetter
 	tmpdir  string
 	storage *db.Handle
 
@@ -52,9 +52,9 @@ type Manager struct {
 	records map[string]*db.Record
 }
 
-func NewManager(tmpdir string, hClient HttpHeadGetter, storage *db.Handle) *Manager {
+func NewManager(tmpdir string, getter ModifiedGetter, storage *db.Handle) *Manager {
 	return &Manager{
-		hClient: hClient,
+		getter:  getter,
 		tmpdir:  tmpdir,
 		records: map[string]*db.Record{},
 		storage: storage,
@@ -65,6 +65,11 @@ func (m *Manager) LoadFromURL(opkurl string) error {
 	record, err := m.fromOPKURL(opkurl)
 	if err != nil {
 		return err
+	}
+
+	// nil record means we already have the data.
+	if record == nil {
+		return nil
 	}
 	key := string(record.Hash)
 
@@ -81,17 +86,24 @@ func (m *Manager) PersistRecords() (int, error) {
 }
 
 func (m *Manager) fromOPKURL(opkurl string) (*db.Record, error) {
+	// First we retrieve the last update time for that url
+	date, err := m.storage.LastUpdated(opkurl)
+	if err != nil {
+		return nil, err
+	}
+
+	// Now we only retrieve tha opk if it is newer than the current version.
+	resp, err := m.getter.GetIfModified(date, opkurl)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
 	tmpFile, err := ioutil.TempFile(m.tmpdir, "Fopkcat-*-"+url.PathEscape(opkurl))
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmpFile.Name())
-
-	resp, err := http.Get(opkurl)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
 		return nil, err
@@ -114,6 +126,7 @@ func (m *Manager) fromOPK(opkfile, opkurl string) (*db.Record, error) {
 	record := &db.Record{
 		Hash: hash,
 		URL:  opkurl,
+		Date: time.Now().UTC(),
 	}
 
 	if err := m.extractOPK(opkfile, record); err != nil {

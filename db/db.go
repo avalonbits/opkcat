@@ -74,6 +74,35 @@ func Test() (*Handle, error) {
 	}, nil
 }
 
+func (h *Handle) Close() {
+	h.db.Close()
+}
+
+func (h *Handle) LastUpdated(opkurl string) (time.Time, error) {
+	if len(opkurl) == 0 {
+		return time.Time{}, fmt.Errorf("empty url")
+	}
+
+	date := &time.Time{}
+	err := h.db.View(func(txn *badger.Txn) error {
+		key := []byte("_url:" + url.PathEscape(opkurl))
+		item, err := txn.Get(key)
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				return nil
+			}
+			return err
+		}
+		return item.Value(func(data []byte) error {
+			return date.UnmarshalBinary(data)
+		})
+	})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return *date, nil
+}
+
 // PutRecord will inserr a record into the database.
 // If the record already exist, it will be updated.
 func (h *Handle) UpdateRecord(rec *Record) error {
@@ -118,12 +147,11 @@ func (h *Handle) updateRecord(rec *Record, buf *bytes.Buffer, txn *badger.Txn) e
 	if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
 		return err
 	}
-	buf.Reset()
-	err := enc.Encode(rec.Date)
+	date, err := rec.Date.MarshalBinary()
 	if err != nil {
 		return err
 	}
-	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), buf.Bytes())
+	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), date)
 }
 
 func (h *Handle) recordExists(hash []byte, txn *badger.Txn) bool {
