@@ -44,7 +44,14 @@ type Getter struct {
 }
 
 func (g *Getter) GetIfModified(since time.Time, url string) (*http.Response, error) {
-	return g.client.Get(url)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	if !since.IsZero() {
+		req.Header["If-Modified-Since"] = []string{since.Format("Mon, 2 Jan 2006 15:04:05 MST")}
+	}
+	return g.client.Do(req)
 }
 
 func main() {

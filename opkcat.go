@@ -69,6 +69,7 @@ func (m *Manager) LoadFromURL(opkurl string) error {
 
 	// nil record means we already have the data.
 	if record == nil {
+		fmt.Println(opkurl, "is up-to-date")
 		return nil
 	}
 	key := string(record.Hash)
@@ -98,6 +99,12 @@ func (m *Manager) fromOPKURL(opkurl string) (*db.Record, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotModified {
+		return nil, nil
+	}
+
+	fmt.Println(resp.Header["Etag"])
 
 	tmpFile, err := ioutil.TempFile(m.tmpdir, "Fopkcat-*-"+url.PathEscape(opkurl))
 	if err != nil {

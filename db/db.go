@@ -97,10 +97,7 @@ func (h *Handle) LastUpdated(opkurl string) (time.Time, error) {
 			return date.UnmarshalBinary(data)
 		})
 	})
-	if err != nil {
-		return time.Time{}, err
-	}
-	return *date, nil
+	return *date, err
 }
 
 // PutRecord will inserr a record into the database.
