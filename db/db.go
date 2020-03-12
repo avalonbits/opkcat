@@ -75,24 +75,42 @@ func (h *Handle) UpdateRecord(rec *record.Record) error {
 	})
 }
 
-func (h *Handle) RecordExists(rec *record.Record) (bool, error) {
-	if len(rec.Hash) == 0 {
-		return false, fmt.Errorf("no valid hash for the record")
-	}
+func (h *Handle) MultiUpdateRecord(records map[string]*record.Record) (int, error) {
+	count := 0
+	err := h.db.Update(func(txn *badger.Txn) error {
+		var buf bytes.Buffer
+		for _, rec := range records {
+			if len(rec.Hash) == 0 {
+				return fmt.Errorf("No valid hash for %s", rec.URL)
+			}
+			if h.recordExists(rec.Hash, txn) {
+				continue
+			}
 
-	exists := false
-	err := h.db.View(func(txn *badger.Txn) error {
-		// Record exists if key exists, no need to read the value.
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-
-		itr := txn.NewIterator(opts)
-		defer itr.Close()
-
-		// Go straight to our expected key.
-		itr.Seek(rec.Hash)
-		exists = itr.ValidForPrefix(rec.Hash)
+			buf.Reset()
+			enc := gob.NewEncoder(&buf)
+			if err := enc.Encode(rec); err != nil {
+				return err
+			}
+			if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
+				return err
+			}
+			count++
+		}
 		return nil
 	})
-	return exists, err
+	return count, err
+}
+
+func (h *Handle) recordExists(hash []byte, txn *badger.Txn) bool {
+	// Record exists if key exists, no need to read the value.
+	opts := badger.DefaultIteratorOptions
+	opts.PrefetchValues = false
+
+	itr := txn.NewIterator(opts)
+	defer itr.Close()
+
+	// Go straight to our expected key.
+	itr.Seek(hash)
+	return itr.ValidForPrefix(hash)
 }

@@ -21,13 +21,59 @@ package opkcat
 import (
 	"bytes"
 	"io/ioutil"
+	"net/http"
 	"os"
+	"sync"
 
+	"github.com/avalonbits/opkcat/db"
+	"github.com/avalonbits/opkcat/record"
 	"github.com/gomarkdown/markdown/ast"
 	"github.com/gomarkdown/markdown/parser"
 )
 
 var opkEnd = []byte(".opk")
+
+type HttpHeadGetter interface {
+	Head(url string) (*http.Response, error)
+	Get(url string) (*http.Response, error)
+}
+
+type Manager struct {
+	hClient HttpHeadGetter
+	tmpdir  string
+	storage *db.Handle
+
+	mu      sync.Mutex
+	records map[string]*record.Record
+}
+
+func NewManager(tmpdir string, hClient HttpHeadGetter, storage *db.Handle) *Manager {
+	return &Manager{
+		hClient: hClient,
+		tmpdir:  tmpdir,
+		records: map[string]*record.Record{},
+		storage: storage,
+	}
+}
+
+func (m *Manager) LoadFromURL(opkurl string) error {
+	record, err := record.FromOPKURL(m.tmpdir, opkurl)
+	if err != nil {
+		return err
+	}
+	key := string(record.Hash)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.records[key]; !ok {
+		m.records[key] = record
+	}
+	return nil
+}
+
+func (m *Manager) PersistRecords() (int, error) {
+	return m.storage.MultiUpdateRecord(m.records)
+}
 
 // SourceList returns a list of URLs of known opk files
 func SourceList(markdown string) []string {

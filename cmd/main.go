@@ -22,12 +22,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 
 	"github.com/avalonbits/opkcat"
 	"github.com/avalonbits/opkcat/db"
-	"github.com/avalonbits/opkcat/record"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -50,11 +50,12 @@ func main() {
 	ctx := context.Background()
 	sources := opkcat.SourceList(flag.Args()[0])
 	sem := semaphore.NewWeighted(10)
+	manager := opkcat.NewManager(*tmpDir, &http.Client{}, storage)
 	var wg sync.WaitGroup
-	for i, url := range sources {
+	for _, url := range sources {
 		wg.Add(1)
 		atomic.AddInt32(&count, 1)
-		go func(idx int, url string) {
+		go func(url string) {
 			defer wg.Done()
 			defer func() {
 				fmt.Println("Need to process", atomic.AddInt32(&count, -1))
@@ -65,29 +66,17 @@ func main() {
 				return
 			}
 			defer sem.Release(1)
-
-			rec, err := record.FromOPKURL(*tmpDir, url)
-			if err != nil {
-				fmt.Printf("Error processing %s: %v\n", url, err)
+			if err := manager.LoadFromURL(url); err != nil {
+				fmt.Printf("Error loading from url: %v", url)
 				return
 			}
-			exists, err := storage.RecordExists(rec)
-			if err != nil {
-				fmt.Printf("Error reading record: %v\n", err)
-				return
-			}
-
-			if exists {
-				fmt.Printf("Record for %s already inserted.\n", rec.URL)
-				return
-			}
-			if err := storage.UpdateRecord(rec); err != nil {
-				fmt.Printf("Unable to write record: %v", err)
-				return
-			}
-		}(i, url)
+		}(url)
 	}
 	fmt.Println("Waiting...")
 	wg.Wait()
-	fmt.Println("Done")
+	updated, err := manager.PersistRecords()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Done. Wrote %d records\n", updated)
 }
