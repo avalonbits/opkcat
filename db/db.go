@@ -39,6 +39,7 @@ type Record struct {
 	URL     string
 	Hash    []byte
 	Date    time.Time
+	Etag    string
 	Entries []*Entry
 }
 
@@ -78,12 +79,17 @@ func (h *Handle) Close() {
 	h.db.Close()
 }
 
-func (h *Handle) LastUpdated(opkurl string) (time.Time, error) {
+type freshness struct {
+	Date time.Time
+	Etag string
+}
+
+func (h *Handle) LastUpdated(opkurl string) (time.Time, string, error) {
 	if len(opkurl) == 0 {
-		return time.Time{}, fmt.Errorf("empty url")
+		return time.Time{}, "", fmt.Errorf("empty url")
 	}
 
-	date := &time.Time{}
+	fresh := &freshness{}
 	err := h.db.View(func(txn *badger.Txn) error {
 		key := []byte("_url:" + url.PathEscape(opkurl))
 		item, err := txn.Get(key)
@@ -94,10 +100,12 @@ func (h *Handle) LastUpdated(opkurl string) (time.Time, error) {
 			return err
 		}
 		return item.Value(func(data []byte) error {
-			return date.UnmarshalBinary(data)
+			buf := bytes.NewBuffer(data)
+			dec := gob.NewDecoder(buf)
+			return dec.Decode(fresh)
 		})
 	})
-	return *date, err
+	return fresh.Date, fresh.Etag, err
 }
 
 // PutRecord will inserr a record into the database.
@@ -144,11 +152,13 @@ func (h *Handle) updateRecord(rec *Record, buf *bytes.Buffer, txn *badger.Txn) e
 	if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
 		return err
 	}
-	date, err := rec.Date.MarshalBinary()
-	if err != nil {
+
+	var fBuf bytes.Buffer
+	fEnc := gob.NewEncoder(&fBuf)
+	if err := fEnc.Encode(&freshness{Date: rec.Date, Etag: rec.Etag}); err != nil {
 		return err
 	}
-	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), date)
+	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), fBuf.Bytes())
 }
 
 func (h *Handle) recordExists(hash []byte, txn *badger.Txn) bool {

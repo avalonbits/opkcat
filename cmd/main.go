@@ -43,14 +43,20 @@ type Getter struct {
 	client *http.Client
 }
 
-func (g *Getter) GetIfModified(since time.Time, url string) (*http.Response, error) {
+func (g *Getter) GetIfModified(since time.Time, etag, url string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	if !since.IsZero() {
+
+	// We either send the if-none-match or the if-modified-since header, never both or etag matching
+	// won't work.
+	if etag != "" {
+		req.Header["If-None-Match"] = []string{etag}
+	} else if !since.IsZero() {
 		req.Header["If-Modified-Since"] = []string{since.Format("Mon, 2 Jan 2006 15:04:05 MST")}
 	}
+
 	return g.client.Do(req)
 }
 

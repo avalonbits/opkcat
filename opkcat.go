@@ -40,7 +40,7 @@ import (
 )
 
 type ModifiedGetter interface {
-	GetIfModified(since time.Time, url string) (*http.Response, error)
+	GetIfModified(since time.Time, etag, url string) (*http.Response, error)
 }
 
 type Manager struct {
@@ -69,7 +69,6 @@ func (m *Manager) LoadFromURL(opkurl string) error {
 
 	// nil record means we already have the data.
 	if record == nil {
-		fmt.Println(opkurl, "is up-to-date")
 		return nil
 	}
 	key := string(record.Hash)
@@ -88,13 +87,13 @@ func (m *Manager) PersistRecords() (int, error) {
 
 func (m *Manager) fromOPKURL(opkurl string) (*db.Record, error) {
 	// First we retrieve the last update time for that url
-	date, err := m.storage.LastUpdated(opkurl)
+	date, etag, err := m.storage.LastUpdated(opkurl)
 	if err != nil {
 		return nil, err
 	}
 
 	// Now we only retrieve tha opk if it is newer than the current version.
-	resp, err := m.getter.GetIfModified(date, opkurl)
+	resp, err := m.getter.GetIfModified(date, etag, opkurl)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +102,19 @@ func (m *Manager) fromOPKURL(opkurl string) (*db.Record, error) {
 	if resp.StatusCode == http.StatusNotModified {
 		return nil, nil
 	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("http fetch error: %v", resp.StatusCode)
+	}
 
-	fmt.Println(resp.Header["Etag"])
+	var readEtag string
+	if len(resp.Header["Etag"]) > 0 {
+		readEtag = resp.Header["Etag"][0]
+	}
+
+	// As a last resort, we compare the etags here in case the server didn't respond with a 304.
+	if readEtag == etag {
+		return nil, nil
+	}
 
 	tmpFile, err := ioutil.TempFile(m.tmpdir, "Fopkcat-*-"+url.PathEscape(opkurl))
 	if err != nil {
@@ -120,11 +130,11 @@ func (m *Manager) fromOPKURL(opkurl string) (*db.Record, error) {
 		return nil, err
 	}
 
-	return m.fromOPK(tmpFile.Name(), opkurl)
+	return m.fromOPK(tmpFile.Name(), readEtag, opkurl)
 }
 
 // FromOPK creates a record by parsing an opkfile. opkurl as added to the the URL field.
-func (m *Manager) fromOPK(opkfile, opkurl string) (*db.Record, error) {
+func (m *Manager) fromOPK(opkfile, etag, opkurl string) (*db.Record, error) {
 	hash, err := fileSHA256(opkfile)
 	if err != nil {
 		return nil, err
@@ -134,6 +144,7 @@ func (m *Manager) fromOPK(opkfile, opkurl string) (*db.Record, error) {
 		Hash: hash,
 		URL:  opkurl,
 		Date: time.Now().UTC(),
+		Etag: etag,
 	}
 
 	if err := m.extractOPK(opkfile, record); err != nil {
