@@ -24,13 +24,27 @@ import (
 	"encoding/gob"
 	"fmt"
 
-	"github.com/avalonbits/opkcat/record"
 	"github.com/dgraph-io/badger/v2"
 )
 
 // Handle is a database handle. It can be used to read and write data concurrently.
 type Handle struct {
 	db *badger.DB
+}
+
+// Record is the record that can be stored in the database.
+type Record struct {
+	URL     string
+	Hash    []byte
+	Entries []*Entry
+}
+
+type Entry struct {
+	Name        string
+	Description string
+	Type        string
+	Categories  []string
+	Icon        []byte
 }
 
 // Prod returns a production version of the database in location.
@@ -59,7 +73,7 @@ func Test() (*Handle, error) {
 
 // PutRecord will inserr a record into the database.
 // If the record already exist, it will be updated.
-func (h *Handle) UpdateRecord(rec *record.Record) error {
+func (h *Handle) UpdateRecord(rec *Record) error {
 	if len(rec.Hash) == 0 {
 		return fmt.Errorf("no valid hash for the record")
 	}
@@ -75,7 +89,7 @@ func (h *Handle) UpdateRecord(rec *record.Record) error {
 	})
 }
 
-func (h *Handle) MultiUpdateRecord(records map[string]*record.Record) (int, error) {
+func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 	count := 0
 	err := h.db.Update(func(txn *badger.Txn) error {
 		var buf bytes.Buffer
