@@ -35,7 +35,8 @@ import (
 var (
 	dbDir = flag.String("db_dir", "",
 		"Location of the database. Should point to an existing directory.")
-	tmpDir = flag.String("tmp_dir", "",
+	idxFile = flag.String("idx_file", "", "Location of the full-text index file.")
+	tmpDir  = flag.String("tmp_dir", "",
 		"Location use for temporary data. If empty, will use the system default.")
 )
 
@@ -63,7 +64,7 @@ func (g *Getter) GetIfModified(since time.Time, etag, url string) (*http.Respons
 func main() {
 	flag.Parse()
 
-	storage, err := db.Prod(*dbDir)
+	storage, err := db.Prod(*dbDir, *idxFile)
 	if err != nil {
 		panic(err)
 	}

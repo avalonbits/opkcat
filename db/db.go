@@ -26,12 +26,14 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/blevesearch/bleve"
 	"github.com/dgraph-io/badger/v2"
 )
 
 // Handle is a database handle. It can be used to read and write data concurrently.
 type Handle struct {
-	db *badger.DB
+	db    *badger.DB
+	index bleve.Index
 }
 
 // Record is the record that can be stored in the database.
@@ -52,14 +54,23 @@ type Entry struct {
 }
 
 // Prod returns a production version of the database in location.
-func Prod(location string) (*Handle, error) {
-	db, err := badger.Open(badger.DefaultOptions(location))
+func Prod(dbLocation, idxLocation string) (*Handle, error) {
+	db, err := badger.Open(badger.DefaultOptions(dbLocation))
 	if err != nil {
 		return nil, err
 	}
+	index, err := bleve.Open(idxLocation)
+	if err != nil {
+		// Path might not exist. Let's try creating it.
+		if index, err = bleve.New(idxLocation, bleve.NewIndexMapping()); err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
 
 	return &Handle{
-		db: db,
+		db:    db,
+		index: index,
 	}, nil
 }
 
