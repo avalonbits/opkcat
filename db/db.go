@@ -86,8 +86,14 @@ func Test() (*Handle, error) {
 	}, nil
 }
 
-func (h *Handle) Close() {
-	h.db.Close()
+func (h *Handle) Close() error {
+	if err := h.db.Close(); err != nil {
+		return err
+	}
+	if err := h.index.Close(); err != nil {
+		return err
+	}
+	return nil
 }
 
 type freshness struct {
@@ -169,7 +175,12 @@ func (h *Handle) updateRecord(rec *Record, buf *bytes.Buffer, txn *badger.Txn) e
 	if err := fEnc.Encode(&freshness{Date: rec.Date, Etag: rec.Etag}); err != nil {
 		return err
 	}
-	return txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), fBuf.Bytes())
+	if err := txn.Set([]byte("_url:"+url.PathEscape(rec.URL)), fBuf.Bytes()); err != nil {
+		return err
+	}
+
+	// Now index the record.
+	return h.index.Index(string(rec.Hash), rec)
 }
 
 func (h *Handle) recordExists(hash []byte, txn *badger.Txn) bool {
