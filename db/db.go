@@ -101,6 +101,57 @@ type freshness struct {
 	Etag string
 }
 
+func (h *Handle) Query(qry string) ([]*Record, error) {
+	if qry == "" {
+		return nil, fmt.Errorf("empty query string")
+	}
+	query := bleve.NewMatchQuery(qry)
+	search := bleve.NewSearchRequestOptions(query, 100, 0, false)
+	search.SortBy([]string{"Entries.Name"})
+	results, err := h.index.Search(search)
+	if err != nil {
+		return nil, err
+	}
+
+	recIds := make([][]byte, len(results.Hits))
+	for i, hit := range results.Hits {
+		recIds[i] = []byte(hit.ID)
+	}
+
+	records := make([]*Record, 0, len(results.Hits))
+	err = h.db.View(func(txn *badger.Txn) error {
+		for _, id := range recIds {
+			item, err := txn.Get(id)
+			if err != nil {
+				if err == badger.ErrKeyNotFound {
+					fmt.Printf("Did not find record for key %x. Should not happen.\n", id)
+					continue
+				}
+				return err
+			}
+			err = item.Value(func(data []byte) error {
+				record := &Record{}
+				buf := bytes.NewBuffer(data)
+				dec := gob.NewDecoder(buf)
+				if err := dec.Decode(record); err != nil {
+					fmt.Println("ERROR DECODING")
+					return err
+				}
+				records = append(records, record)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return records, err
+}
+
 func (h *Handle) LastUpdated(opkurl string) (time.Time, string, error) {
 	if len(opkurl) == 0 {
 		return time.Time{}, "", fmt.Errorf("empty url")
@@ -134,14 +185,13 @@ func (h *Handle) UpdateRecord(rec *Record) error {
 
 	// We assume that if the hash exists then the record is valid.
 	return h.db.Update(func(txn *badger.Txn) error {
-		return h.updateRecord(rec, &bytes.Buffer{}, txn)
+		return h.updateRecord(rec, txn)
 	})
 }
 
 func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 	count := 0
 	err := h.db.Update(func(txn *badger.Txn) error {
-		var buf bytes.Buffer
 		for _, rec := range records {
 			if len(rec.Hash) == 0 {
 				return fmt.Errorf("No valid hash for %s", rec.URL)
@@ -150,8 +200,7 @@ func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 				continue
 			}
 
-			buf.Reset()
-			if err := h.updateRecord(rec, &buf, txn); err != nil {
+			if err := h.updateRecord(rec, txn); err != nil {
 				return err
 			}
 			count++
@@ -161,12 +210,13 @@ func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
 	return count, err
 }
 
-func (h *Handle) updateRecord(rec *Record, buf *bytes.Buffer, txn *badger.Txn) error {
-	enc := gob.NewEncoder(buf)
+func (h *Handle) updateRecord(rec *Record, txn *badger.Txn) error {
+	var eBuf bytes.Buffer
+	enc := gob.NewEncoder(&eBuf)
 	if err := enc.Encode(rec); err != nil {
 		return err
 	}
-	if err := txn.Set(rec.Hash, buf.Bytes()); err != nil {
+	if err := txn.Set(rec.Hash, eBuf.Bytes()); err != nil {
 		return err
 	}
 
