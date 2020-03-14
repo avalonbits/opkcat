@@ -73,24 +73,4 @@ func main() {
 	if err := fetchServ.Fetch(); err != nil {
 		panic(err)
 	}
-
-	/*
-		fmt.Println("Waiting...")
-		wg.Wait()
-		updated, err := manager.PersistRecords()
-		if err != nil {
-			panic(err)
-		}
-		fmt.Printf("Done. Wrote %d records\n", updated)
-
-		recs, err := storage.Query("emulator")
-		if err != nil {
-			panic(err)
-		}
-		for _, rec := range recs {
-			for _, entry := range rec.Entries {
-				fmt.Println(entry.Name, " - ", entry.Description)
-			}
-		}
-	*/
 }

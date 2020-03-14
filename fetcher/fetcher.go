@@ -48,6 +48,9 @@ type Service struct {
 	storage    *db.Handle
 	getter     ModifiedGetter
 	maxFetches int
+
+	quit   chan struct{}
+	ticker *time.Ticker
 }
 
 func New(tmpdir string, storage *db.Handle, getter ModifiedGetter, maxFetches int) *Service {
@@ -55,11 +58,45 @@ func New(tmpdir string, storage *db.Handle, getter ModifiedGetter, maxFetches in
 		storage:    storage,
 		getter:     getter,
 		maxFetches: maxFetches,
+
+		quit:   make(chan struct{}),
+		ticker: time.NewTicker(12 * time.Hour),
 	}
 }
 
 func (s *Service) Add(url string) error {
 	return s.storage.IndexURL(url)
+}
+
+func (s *Service) Run() error {
+	defer close(s.quit)
+	defer s.ticker.Stop()
+
+	runFetch := make(chan bool, 1)
+	defer close(runFetch)
+
+	// We always run the fetcher on startup.
+	runFetch <- true
+
+RUN:
+	for {
+		select {
+		case <-runFetch:
+			break
+		case <-s.quit:
+			break RUN
+		case <-s.ticker.C:
+			runFetch <- true
+			break
+		}
+	}
+	return nil
+}
+
+func (s *Service) Stop() error {
+	s.quit <- struct{}{}
+	<-s.quit
+	return nil
 }
 
 // Fetch retrieves and stores metadata on each known opk.
