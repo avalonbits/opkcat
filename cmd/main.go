@@ -21,6 +21,8 @@ package main
 import (
 	"flag"
 	"net/http"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/avalonbits/opkcat"
@@ -66,11 +68,17 @@ func main() {
 	}
 	defer storage.Close()
 
+	sigC := make(chan os.Signal, 1)
+	signal.Notify(sigC, os.Interrupt, os.Kill)
+
 	fetchServ := fetcher.New(*tmpDir, storage, &Getter{client: &http.Client{}}, 10)
 	for _, source := range opkcat.SourceList(flag.Args()[0]) {
 		fetchServ.Add(source)
 	}
-	if err := fetchServ.Fetch(); err != nil {
+
+	go fetchServ.Run()
+	<-sigC
+	if fetchServ.Stop(); err != nil {
 		panic(err)
 	}
 }

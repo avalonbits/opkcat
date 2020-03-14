@@ -70,24 +70,33 @@ func (s *Service) Add(url string) error {
 
 func (s *Service) Run() error {
 	defer close(s.quit)
-	defer s.ticker.Stop()
-
-	runFetch := make(chan bool, 1)
-	defer close(runFetch)
 
 	// We always run the fetcher on startup.
+	runFetch := make(chan bool, 1)
 	runFetch <- true
 
 RUN:
 	for {
 		select {
 		case <-runFetch:
+			if err := s.Fetch(); err != nil {
+				log.Println(err)
+			}
 			break
-		case <-s.quit:
-			break RUN
 		case <-s.ticker.C:
 			runFetch <- true
 			break
+		case <-s.quit:
+			// We stop the ticker so it won't write after we close the channel
+			s.ticker.Stop()
+			close(runFetch)
+
+			// Drain the channel. Not sure it is required, but let's do it anyway.
+			for _ = range runFetch {
+			}
+
+			// We are done.
+			break RUN
 		}
 	}
 	return nil
