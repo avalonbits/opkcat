@@ -53,6 +53,12 @@ type Entry struct {
 	Icon        []byte
 }
 
+type URLFreshness struct {
+	URL        string
+	LastUpdate time.Time
+	Etag       string
+}
+
 // Prod returns a production version of the database in location.
 func Prod(dbLocation, idxLocation string) (*Handle, error) {
 	db, err := badger.Open(badger.DefaultOptions(dbLocation))
@@ -94,6 +100,27 @@ func (h *Handle) Close() error {
 		return err
 	}
 	return nil
+}
+
+func (h *Handle) IndexURL(opkurl string) error {
+	return h.db.Update(func(txn *badger.Txn) error {
+		fresh, err := h.lastUpdated(opkurl, txn)
+		if err != nil {
+			return err
+		}
+
+		// If we have already indexed the url, we are done.
+		if fresh != nil {
+			return nil
+		}
+
+		var fBuf bytes.Buffer
+		fEnc := gob.NewEncoder(&fBuf)
+		if err := fEnc.Encode(&freshness{Date: time.Time{}, Etag: ""}); err != nil {
+			return err
+		}
+		return txn.Set([]byte("_url:"+url.PathEscape(opkurl)), fBuf.Bytes())
+	})
 }
 
 type freshness struct {
@@ -152,28 +179,87 @@ func (h *Handle) Query(qry string) ([]*Record, error) {
 	return records, err
 }
 
+func (h *Handle) KnownURLs() ([]*URLFreshness, error) {
+	var urls []*URLFreshness
+	err := h.db.View(func(txn *badger.Txn) error {
+		prefix := []byte("_url:")
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
+		defer it.Close()
+
+		for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+			item := it.Item()
+			key := bytes.TrimPrefix(item.Key(), prefix)
+			opkurl, err := url.PathUnescape(string(key))
+			if err != nil {
+				return err
+			}
+			err = item.Value(func(data []byte) error {
+				fresh := &freshness{}
+				buf := bytes.NewBuffer(data)
+				dec := gob.NewDecoder(buf)
+				if err := dec.Decode(fresh); err != nil {
+					return err
+				}
+				urls = append(urls, &URLFreshness{
+					URL:        opkurl,
+					LastUpdate: fresh.Date,
+					Etag:       fresh.Etag,
+				})
+				return nil
+			})
+			if err != nil {
+				return nil
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return urls, nil
+}
+
 func (h *Handle) LastUpdated(opkurl string) (time.Time, string, error) {
 	if len(opkurl) == 0 {
 		return time.Time{}, "", fmt.Errorf("empty url")
 	}
 
-	fresh := &freshness{}
+	var fresh *freshness
 	err := h.db.View(func(txn *badger.Txn) error {
-		key := []byte("_url:" + url.PathEscape(opkurl))
-		item, err := txn.Get(key)
-		if err != nil {
-			if err == badger.ErrKeyNotFound {
-				return nil
-			}
-			return err
-		}
-		return item.Value(func(data []byte) error {
-			buf := bytes.NewBuffer(data)
-			dec := gob.NewDecoder(buf)
-			return dec.Decode(fresh)
-		})
+		var err error
+		fresh, err = h.lastUpdated(opkurl, txn)
+		return err
 	})
-	return fresh.Date, fresh.Etag, err
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	if fresh == nil {
+		return time.Time{}, "", nil
+	}
+	return fresh.Date, fresh.Etag, nil
+}
+
+func (h *Handle) lastUpdated(opkurl string, txn *badger.Txn) (*freshness, error) {
+	key := []byte("_url:" + url.PathEscape(opkurl))
+	item, err := txn.Get(key)
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	fresh := &freshness{}
+	err = item.Value(func(data []byte) error {
+		buf := bytes.NewBuffer(data)
+		dec := gob.NewDecoder(buf)
+		return dec.Decode(fresh)
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return fresh, nil
 }
 
 // PutRecord will inserr a record into the database.
@@ -189,7 +275,7 @@ func (h *Handle) UpdateRecord(rec *Record) error {
 	})
 }
 
-func (h *Handle) MultiUpdateRecord(records map[string]*Record) (int, error) {
+func (h *Handle) MultiUpdateRecord(records []*Record) (int, error) {
 	count := 0
 	err := h.db.Update(func(txn *badger.Txn) error {
 		for _, rec := range records {

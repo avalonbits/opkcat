@@ -19,17 +19,13 @@
 package main
 
 import (
-	"context"
 	"flag"
-	"fmt"
 	"net/http"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/avalonbits/opkcat"
 	"github.com/avalonbits/opkcat/db"
-	"golang.org/x/sync/semaphore"
+	"github.com/avalonbits/opkcat/fetcher"
 )
 
 var (
@@ -70,47 +66,31 @@ func main() {
 	}
 	defer storage.Close()
 
-	var count int32
-	ctx := context.Background()
-	sources := opkcat.SourceList(flag.Args()[0])
-	sem := semaphore.NewWeighted(10)
-	manager := opkcat.NewManager(*tmpDir, &Getter{client: &http.Client{}}, storage)
-	var wg sync.WaitGroup
-	for _, url := range sources {
-		wg.Add(1)
-		atomic.AddInt32(&count, 1)
-		go func(url string) {
-			defer wg.Done()
-			defer func() {
-				fmt.Println("Need to process", atomic.AddInt32(&count, -1))
-			}()
-
-			if err := sem.Acquire(ctx, 1); err != nil {
-				fmt.Printf("Error acquiring semaphore: %v", err)
-				return
-			}
-			defer sem.Release(1)
-			if err := manager.LoadFromURL(url); err != nil {
-				fmt.Printf("Error loading from url: %v\n", err)
-				return
-			}
-		}(url)
+	fetchServ := fetcher.New(*tmpDir, storage, &Getter{client: &http.Client{}}, 10)
+	for _, source := range opkcat.SourceList(flag.Args()[0]) {
+		fetchServ.Add(source)
 	}
-	fmt.Println("Waiting...")
-	wg.Wait()
-	updated, err := manager.PersistRecords()
-	if err != nil {
+	if err := fetchServ.Fetch(); err != nil {
 		panic(err)
 	}
-	fmt.Printf("Done. Wrote %d records\n", updated)
 
-	recs, err := storage.Query("emulator")
-	if err != nil {
-		panic(err)
-	}
-	for _, rec := range recs {
-		for _, entry := range rec.Entries {
-			fmt.Println(entry.Name, " - ", entry.Description)
+	/*
+		fmt.Println("Waiting...")
+		wg.Wait()
+		updated, err := manager.PersistRecords()
+		if err != nil {
+			panic(err)
 		}
-	}
+		fmt.Printf("Done. Wrote %d records\n", updated)
+
+		recs, err := storage.Query("emulator")
+		if err != nil {
+			panic(err)
+		}
+		for _, rec := range recs {
+			for _, entry := range rec.Entries {
+				fmt.Println(entry.Name, " - ", entry.Description)
+			}
+		}
+	*/
 }
