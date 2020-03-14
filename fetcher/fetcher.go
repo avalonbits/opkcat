@@ -20,6 +20,7 @@
 package fetcher
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -75,18 +76,29 @@ func (s *Service) Run() error {
 	runFetch := make(chan bool, 1)
 	runFetch <- true
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
 RUN:
 	for {
 		select {
 		case <-runFetch:
-			if err := s.Fetch(); err != nil {
-				log.Println(err)
-			}
-			break
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := s.Fetch(ctx); err != nil {
+					log.Println(err)
+				} else {
+					log.Println("Done fetching.")
+				}
+			}()
 		case <-s.ticker.C:
 			runFetch <- true
-			break
 		case <-s.quit:
+			// Cancel the context
+			cancel()
+
 			// We stop the ticker so it won't write after we close the channel
 			s.ticker.Stop()
 			close(runFetch)
@@ -95,21 +107,27 @@ RUN:
 			for _ = range runFetch {
 			}
 
-			// We are done.
+			log.Println("Waiting for fetches to finish.")
+			wg.Wait()
+			log.Println("Done fetching.")
 			break RUN
 		}
 	}
+
 	return nil
 }
 
 func (s *Service) Stop() error {
+	log.Println("Stopping fetcher.")
 	s.quit <- struct{}{}
+	log.Println("Waiting for confirmation.")
 	<-s.quit
+	log.Println("Done.")
 	return nil
 }
 
 // Fetch retrieves and stores metadata on each known opk.
-func (s *Service) Fetch() error {
+func (s *Service) Fetch(ctx context.Context) error {
 	var group errgroup.Group
 	urlsCh := make(chan *db.URLFreshness)
 
@@ -123,8 +141,14 @@ func (s *Service) Fetch() error {
 			return err
 		}
 
+	URL_LOOP:
 		for _, opkurl := range urls {
-			urlsCh <- opkurl
+			select {
+			case <-ctx.Done():
+				break URL_LOOP
+			case urlsCh <- opkurl:
+				break
+			}
 		}
 		return nil
 	})
@@ -143,6 +167,7 @@ func (s *Service) Fetch() error {
 				}
 
 				if record == nil {
+					log.Println(opkurl, "is up-to-date.")
 					// The current record is up-to-date, we are done with the url.
 					continue
 				}
@@ -153,12 +178,14 @@ func (s *Service) Fetch() error {
 			}
 			return nil
 		})
+
 	}
 
 	if err := group.Wait(); err != nil {
 		return err
 	}
 
+	log.Println("Will write", len(records), "records")
 	// - Once everyone is done, we write the records in a single batch.
 	_, err := s.storage.MultiUpdateRecord(records)
 	return err

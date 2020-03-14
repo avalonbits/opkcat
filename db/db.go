@@ -282,9 +282,6 @@ func (h *Handle) MultiUpdateRecord(records []*Record) (int, error) {
 			if len(rec.Hash) == 0 {
 				return fmt.Errorf("No valid hash for %s", rec.URL)
 			}
-			if h.recordExists(rec.Hash, txn) {
-				continue
-			}
 
 			if err := h.updateRecord(rec, txn); err != nil {
 				return err
