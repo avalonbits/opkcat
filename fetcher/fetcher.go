@@ -129,7 +129,7 @@ func (s *Service) Stop() error {
 // Fetch retrieves and stores metadata on each known opk.
 func (s *Service) Fetch(ctx context.Context) error {
 	var group errgroup.Group
-	urlsCh := make(chan *db.URLFreshness)
+	urlsCh := make(chan *db.URLFreshness, s.maxFetches)
 
 	// To limit the amount of goroutines, we desing the fetcher in the following way:
 	// - 1 goroutine reads the known urls and send them over a channel.
