@@ -21,8 +21,6 @@ package main
 import (
 	"flag"
 	"net/http"
-	"os"
-	"os/signal"
 	"time"
 
 	"github.com/avalonbits/opkcat"
@@ -60,11 +58,6 @@ func (g *Getter) GetIfModified(since time.Time, etag, url string) (*http.Respons
 	return g.client.Do(req)
 }
 
-type StartStopper interface {
-	Run() error
-	Stop() error
-}
-
 func main() {
 	flag.Parse()
 
@@ -74,23 +67,14 @@ func main() {
 	}
 	defer storage.Close()
 
-	sigC := make(chan os.Signal, 1)
-	signal.Notify(sigC, os.Interrupt, os.Kill)
-
 	fetchServ := fetcher.New(*tmpDir, storage, &Getter{client: &http.Client{}}, 10)
 	for _, source := range opkcat.SourceList(flag.Args()[0]) {
 		fetchServ.Add(source)
 	}
 	webServ := web.New(storage)
-	services := []StartStopper{fetchServ, webServ}
-	for _, s := range services {
-		go s.Run()
-	}
 
-	<-sigC
-	for _, s := range services {
-		if s.Stop(); err != nil {
-			panic(err)
-		}
+	sManager := opkcat.NewServiceManager([]opkcat.StartStopper{fetchServ, webServ})
+	if err := sManager.Run(); err != nil {
+		panic(err)
 	}
 }

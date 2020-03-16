@@ -1,6 +1,8 @@
 package web
 
-import "github.com/avalonbits/opkcat/db"
+import (
+	"github.com/avalonbits/opkcat/db"
+)
 
 type Service struct {
 	storage *db.Handle
@@ -14,7 +16,7 @@ func New(storage *db.Handle) *Service {
 	}
 }
 
-func (s *Service) Run() error {
+func (s *Service) Start() error {
 	<-s.quit
 	s.quit <- true
 	return nil

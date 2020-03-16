@@ -21,11 +21,69 @@ package opkcat
 import (
 	"bytes"
 	"io/ioutil"
+	"log"
 	"os"
+	"os/signal"
+	"sync"
 
 	"github.com/gomarkdown/markdown/ast"
 	"github.com/gomarkdown/markdown/parser"
 )
+
+type StartStopper interface {
+	Start() error
+	Stop() error
+}
+
+type ServiceManager struct {
+	services []StartStopper
+	wg       sync.WaitGroup
+}
+
+func NewServiceManager(services []StartStopper) *ServiceManager {
+	return &ServiceManager{
+		services: services,
+	}
+}
+
+func (sm *ServiceManager) Run() error {
+	sigC := make(chan os.Signal, 1)
+	signal.Notify(sigC, os.Interrupt, os.Kill)
+
+	quit := make(chan bool)
+	errs := make([]error, len(sm.services))
+	for idx, s := range sm.services {
+		sm.wg.Add(1)
+		go func(idx int, ss StartStopper) {
+			defer sm.wg.Done()
+			go func() {
+				if err := ss.Start(); err != nil {
+					panic(err)
+				}
+			}()
+			<-quit
+			if err := ss.Stop(); err != nil {
+				errs[idx] = err
+			}
+		}(idx, s)
+	}
+	<-sigC
+	log.Println("Signalling quit.")
+	close(quit)
+
+	log.Println("Waiting for everyone to finish")
+	sm.wg.Wait()
+
+	log.Println("Checking for errors.")
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+
+	log.Println("Service manager is done.")
+	return nil
+}
 
 var opkEnd = []byte(".opk")
 

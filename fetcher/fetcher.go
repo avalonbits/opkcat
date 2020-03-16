@@ -69,24 +69,28 @@ func (s *Service) Add(url string) error {
 	return s.storage.IndexURL(url)
 }
 
-func (s *Service) Run() error {
-	defer close(s.quit)
+func (s *Service) done() {
+	s.quit <- struct{}{}
+}
+
+func (s *Service) Start() error {
+	defer s.done()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	// We always run the fetcher on startup.
 	runFetch := make(chan bool, 1)
 	runFetch <- true
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	var wg sync.WaitGroup
+	var fetchMu sync.Mutex
 RUN:
 	for {
 		select {
 		case <-runFetch:
-			wg.Add(1)
+			fetchMu.Lock()
 			go func() {
-				defer wg.Done()
+				defer fetchMu.Unlock()
 				if err := s.Fetch(ctx); err != nil {
 					log.Println(err)
 				} else {
@@ -96,19 +100,20 @@ RUN:
 		case <-s.ticker.C:
 			runFetch <- true
 		case <-s.quit:
-			// Cancel the context
-			cancel()
-
 			// We stop the ticker so it won't write after we close the channel
 			s.ticker.Stop()
 			close(runFetch)
+
+			// Cancel any fetch that is happening.
+			cancel()
 
 			// Drain the channel. Not sure it is required, but let's do it anyway.
 			for _ = range runFetch {
 			}
 
 			log.Println("Waiting for fetches to finish.")
-			wg.Wait()
+			fetchMu.Lock()
+			fetchMu.Unlock()
 			log.Println("Done fetching.")
 			break RUN
 		}
@@ -118,11 +123,11 @@ RUN:
 }
 
 func (s *Service) Stop() error {
-	log.Println("Stopping fetcher.")
+	// Stop the service
 	s.quit <- struct{}{}
-	log.Println("Waiting for confirmation.")
+
+	// For for all processing to stop
 	<-s.quit
-	log.Println("Done.")
 	return nil
 }
 
