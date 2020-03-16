@@ -262,7 +262,7 @@ func (h *Handle) lastUpdated(opkurl string, txn *badger.Txn) (*freshness, error)
 	return fresh, nil
 }
 
-// PutRecord will inserr a record into the database.
+// PutRecord will insert a record into the database.
 // If the record already exist, it will be updated.
 func (h *Handle) UpdateRecord(rec *Record) error {
 	if len(rec.Hash) == 0 {

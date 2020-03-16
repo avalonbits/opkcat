@@ -28,6 +28,7 @@ import (
 	"github.com/avalonbits/opkcat"
 	"github.com/avalonbits/opkcat/db"
 	"github.com/avalonbits/opkcat/fetcher"
+	"github.com/avalonbits/opkcat/web"
 )
 
 var (
@@ -59,6 +60,11 @@ func (g *Getter) GetIfModified(since time.Time, etag, url string) (*http.Respons
 	return g.client.Do(req)
 }
 
+type StartStopper interface {
+	Run() error
+	Stop() error
+}
+
 func main() {
 	flag.Parse()
 
@@ -75,10 +81,16 @@ func main() {
 	for _, source := range opkcat.SourceList(flag.Args()[0]) {
 		fetchServ.Add(source)
 	}
+	webServ := web.New(storage)
+	services := []StartStopper{fetchServ, webServ}
+	for _, s := range services {
+		go s.Run()
+	}
 
-	go fetchServ.Run()
 	<-sigC
-	if fetchServ.Stop(); err != nil {
-		panic(err)
+	for _, s := range services {
+		if s.Stop(); err != nil {
+			panic(err)
+		}
 	}
 }
